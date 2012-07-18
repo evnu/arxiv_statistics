@@ -95,7 +95,29 @@ end.compact!
 retraction_time_hist = Hash.new(0)
 retraction_time.each{|r| retraction_time_hist[r] += 1}
 
-retraction_time_hist = Hash[retraction_time_hist.sort]
+# calculate the time until the first update
+update_time = @normalized_records.map do |record|
+    start = nil
+    update = nil
+    abort_loop = false
+
+    record.values.flatten(1).each do |version|
+        next if abort_loop
+
+        date = Date.parse(version[:date])
+        if version[:version] == "v1"
+            start = date
+        elsif version[:version] == "v2"
+            update = date
+            abort_loop = true
+        end
+    end
+
+    (update - start).numerator if update
+end.compact!
+
+update_time_hist = Hash.new(0)
+update_time.each{|r| update_time_hist[r] += 1}
 
 # create a plot for the results
 puts "plotting absolute numbers"
@@ -158,6 +180,25 @@ Gnuplot.open do |gp|
         plot.data << Gnuplot::DataSet.new([retraction_time_hist.keys, retraction_time_hist.values]) { |ds|
             ds.with = "impulses"
             ds.title = "retractions"
+            ds.linewidth = 1
+        }
+    end
+end
+
+
+puts "plotting days until update"
+Gnuplot.open do |gp|
+    Gnuplot::Plot.new(gp) do |plot|
+        plot.xrange("[0:#{update_time.max}]")
+        plot.title("arXiv.org days until update")
+        plot.ylabel("updates")
+        plot.xlabel("after days")
+        plot.output("update_time.png")
+        plot.terminal('png')
+
+        plot.data << Gnuplot::DataSet.new([update_time_hist.keys, update_time_hist.values]) { |ds|
+            ds.with = "impulses"
+            ds.title = "updates"
             ds.linewidth = 1
         }
     end
