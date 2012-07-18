@@ -23,14 +23,6 @@ end
 @first_year = (ARGV.flags.first_year || 1993).to_i
 @last_year  = (ARGV.flags.last_year   || 2012).to_i
 
-def select_retracted_entries records
-    records.select do |record|
-        record.values.flatten!(1).map do |version|
-            true if version[:size] == "0kb"
-        end.compact!.to_set.first
-    end
-end
-
 # deserialize dump
 @all_records = Marshal.load(File.open(@file).readlines.join(""))
 @normalized_records = @all_records.flatten(1)
@@ -74,12 +66,43 @@ puts "year\tsubmissions\tupdates\tretractions\tratio submissions vs. retractions
     printf "#{year}\t#{submissions}\t#{updates}\t#{retractions}\t#{ratio}\n"
 end
 
+# calculate for each retracted record how long it lasted until it was retracted
+retraction_time = @normalized_records.map do |record|
+    # calculate the timespan until it was retracted the first time
+    start = nil
+    last = nil
+    abort_loop = false
+
+    record.values.flatten(1).each do |version|
+        next if abort_loop
+
+        date = Date.parse(version[:date])
+        if version[:version] == "v1"
+            start = date
+        elsif version[:size].match(/^0kb/)
+            # if the last one is zero as well, than count this one as retracted
+            if record.values.flatten(1)[-1][:size].match(/^0kb/)
+                last = date
+                abort_loop = true
+            end
+        end
+    end
+
+    (last - start).numerator if last
+end.compact!
+
+# create histogram from retraction_time array
+retraction_time_hist = Hash.new(0)
+retraction_time.each{|r| retraction_time_hist[r] += 1}
+
+retraction_time_hist = Hash[retraction_time_hist.sort]
+
 # create a plot for the results
 puts "plotting absolute numbers"
 Gnuplot.open do |gp|
     Gnuplot::Plot.new(gp) do |plot|
         plot.xrange("[#{@first_year}:#{@last_year}]")
-        plot.title("arXiv.org changes from 1990 to current year")
+        plot.title("arXiv.org changes from #{@first_year} to #{@current_year}")
         plot.ylabel("actions")
         plot.xlabel("year")
         plot.output("absolute_numbers.png")
@@ -102,7 +125,7 @@ puts "plotting ratio"
 Gnuplot.open do |gp|
     Gnuplot::Plot.new(gp) do |plot|
         plot.xrange("[#{@first_year}:#{@last_year}]")
-        plot.title("arXiv.org changes from 1990 to current year")
+        plot.title("arXiv.org changes from #{@first_year} to #{@current_year}")
         plot.ylabel("actions")
         plot.xlabel("year")
         plot.output("ratio.png")
@@ -118,6 +141,24 @@ Gnuplot.open do |gp|
             ds.with = "lines"
             ds.title = "ratio"
             ds.linewidth = 4
+        }
+    end
+end
+
+puts "plotting days until retraction"
+Gnuplot.open do |gp|
+    Gnuplot::Plot.new(gp) do |plot|
+        plot.xrange("[0:#{retraction_time.max}]")
+        plot.title("arXiv.org days until retraction")
+        plot.ylabel("retractions")
+        plot.xlabel("after days")
+        plot.output("retraction_time.png")
+        plot.terminal('png')
+
+        plot.data << Gnuplot::DataSet.new([retraction_time_hist.keys, retraction_time_hist.values]) { |ds|
+            ds.with = "impulses"
+            ds.title = "retractions"
+            ds.linewidth = 1
         }
     end
 end
